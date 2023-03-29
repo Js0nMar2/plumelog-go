@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
@@ -8,10 +9,12 @@ import (
 	"net/http"
 	"plumelog/config"
 	"plumelog/elastic"
+	"plumelog/kafka"
 	"plumelog/log"
 	"plumelog/model"
 	"plumelog/utils"
 	"strconv"
+	"time"
 )
 
 var (
@@ -32,7 +35,7 @@ func main() {
 	r.Use(utils.CorsHandler())
 	r.POST("/login", login)
 	r.Use(utils.Auth())
-	//r.GET("/ws", wsHandle)
+	r.GET("/ws", wsHandle)
 	r.GET("/hello", hello)
 	r.POST("/query", query)
 	r.GET("/appNames", getAppNames)
@@ -66,70 +69,70 @@ func hello(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"errCode": 0, "errMsg": "", "data": "hello world"})
 }
 
-//func wsHandle(c *gin.Context) {
-//	//升级get请求为webSocket协议
-//	query := c.Request.URL.Query()
-//	token := query["token"][0]
-//	appName := query["appName"][0]
-//	env := query["env"][0]
-//	conn, _ := createConn(c)
-//	returnSuccess(conn)
-//	key := token + "_" + appName
-//	group := kafka.ConsumerMap[config.Conf.GroupId]
-//	ch := group.WsChMap[key]
-//	model.ConnMap[key] = conn
-//	ch = make(chan model.PlumelogInfo)
-//	group.WsChMap[key] = ch
-//	go hearBeat(conn, token, appName)
-//	go func() {
-//		for {
-//			select {
-//			case plumelogInfo := <-ch:
-//				if appName == plumelogInfo.AppName && (env == "" || env == plumelogInfo.Env) {
-//					bytes, err := json.Marshal(&plumelogInfo)
-//					err = conn.WriteMessage(1, bytes)
-//					if err != nil {
-//						log.Error.Println(err)
-//						return
-//					}
-//				}
-//			}
-//		}
-//	}()
-//}
-//
-//func createConn(c *gin.Context) (*websocket.Conn, error) {
-//	conn, err := upGrader.Upgrade(c.Writer, c.Request, nil)
-//	return conn, err
-//}
-//
-//func returnSuccess(conn *websocket.Conn) {
-//	info := &model.PlumelogInfo{
-//		Seq:       1,
-//		LogLevel:  "INFO",
-//		TraceId:   "start",
-//		DateTime:  time.Now().Format("2006-01-02 15:04:05"),
-//		ClassName: "ws",
-//		Method:    "start",
-//	}
-//	info.Content = "====================================================滚动日志连接成功!====================================================="
-//	bytes, _ := json.Marshal(&info)
-//	conn.WriteMessage(1, bytes)
-//}
-//
-//// heartBeat 心跳检测
-//func hearBeat(conn *websocket.Conn, token, appName string) {
-//	for {
-//		key := token + "_" + appName
-//		_, _, err := conn.ReadMessage()
-//		if err != nil {
-//			conn.Close()
-//			log.Error.Println(token, "is disconnect:", err)
-//			delete(model.ConnMap, key)
-//			return
-//		}
-//	}
-//}
+func wsHandle(c *gin.Context) {
+	//升级get请求为webSocket协议
+	query := c.Request.URL.Query()
+	token := query["token"][0]
+	appName := query["appName"][0]
+	env := query["env"][0]
+	conn, _ := createConn(c)
+	returnSuccess(conn)
+	key := token + "_" + appName
+	group := kafka.ConsumerMap[config.Conf.GroupId]
+	ch := group.WsChMap[key]
+	model.ConnMap[key] = conn
+	ch = make(chan model.PlumelogInfo)
+	group.WsChMap[key] = ch
+	go hearBeat(conn, token, appName)
+	go func() {
+		for {
+			select {
+			case plumelogInfo := <-ch:
+				if appName == plumelogInfo.AppName && (env == "" || env == plumelogInfo.Env) {
+					bytes, err := json.Marshal(&plumelogInfo)
+					err = conn.WriteMessage(1, bytes)
+					if err != nil {
+						log.Error.Println(err)
+						return
+					}
+				}
+			}
+		}
+	}()
+}
+
+func createConn(c *gin.Context) (*websocket.Conn, error) {
+	conn, err := upGrader.Upgrade(c.Writer, c.Request, nil)
+	return conn, err
+}
+
+func returnSuccess(conn *websocket.Conn) {
+	info := &model.PlumelogInfo{
+		Seq:       1,
+		LogLevel:  "INFO",
+		TraceId:   "start",
+		DateTime:  time.Now().Format("2006-01-02 15:04:05"),
+		ClassName: "ws",
+		Method:    "start",
+	}
+	info.Content = "====================================================滚动日志连接成功!====================================================="
+	bytes, _ := json.Marshal(&info)
+	conn.WriteMessage(1, bytes)
+}
+
+// heartBeat 心跳检测
+func hearBeat(conn *websocket.Conn, token, appName string) {
+	for {
+		key := token + "_" + appName
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			conn.Close()
+			log.Error.Println(token, "is disconnect:", err)
+			delete(model.ConnMap, key)
+			return
+		}
+	}
+}
 
 func query(c *gin.Context) {
 	req := model.PlumelogInfoPageReq{}

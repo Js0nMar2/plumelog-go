@@ -49,7 +49,7 @@ func LogJob() {
 			Error.Println(err)
 		}
 	})
-	c.Run()
+	c.Start()
 }
 
 //var (

@@ -56,7 +56,7 @@ func indexJob() {
 			}
 		}()
 	})
-	c.Run()
+	c.Start()
 }
 
 func createPlumelogServicesIndex() {
