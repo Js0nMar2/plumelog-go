@@ -120,7 +120,7 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 	if claim.Topic() == "app-index" {
 		messages := claim.Messages()
 		for msg := range messages {
-			err := plumelogEs.PutService(string(msg.Value))
+			err := putService(string(msg.Value))
 			if err != nil {
 				log.Error.Println("set elastic index err:", err)
 				return err
@@ -183,4 +183,26 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 		sess.MarkMessage(msg, "")
 	}
 	return nil
+}
+
+func putService(serviceName string) error {
+	query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("serviceName", serviceName)).Filter(elastic.NewIdsQuery().Ids(serviceName))
+	do, err := plumelogEs.Client.Search("plume_log_services").Query(query).Do(context.Background())
+	if err != nil {
+		return err
+	}
+	if do.TotalHits() > 0 {
+		return nil
+	}
+	m := make(map[string]string)
+	m["serviceName"] = serviceName
+	jsonStr, _ := json.Marshal(m)
+	res, err := plumelogEs.Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
+	if res.Result == "created" {
+		ConsumerMap[config.Conf.GroupId].Topics = append(ConsumerMap[config.Conf.GroupId].Topics, serviceName)
+		log.Info.Println("put new service:", serviceName)
+		// 更新 topic
+		ConsumerMap[config.Conf.GroupId].Init()
+	}
+	return err
 }

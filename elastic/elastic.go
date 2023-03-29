@@ -264,22 +264,3 @@ func getSearchService(req *model.PlumelogInfoPageReq) *elastic.SearchService {
 	}
 	return Client.Search(index...).Query(query)
 }
-
-func PutService(serviceName string) error {
-	query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("serviceName", serviceName)).Filter(elastic.NewIdsQuery().Ids(serviceName))
-	do, err := Client.Search("plume_log_services").Query(query).Do(context.Background())
-	if err != nil {
-		return err
-	}
-	if do.TotalHits() > 0 {
-		return nil
-	}
-	m := make(map[string]string)
-	m["serviceName"] = serviceName
-	jsonStr, _ := json.Marshal(m)
-	res, err := Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
-	if res.Result == "created" {
-		log.Info.Println("put new service:", serviceName)
-	}
-	return err
-}
