@@ -274,10 +274,12 @@ func PutService(serviceName string) error {
 	if do.TotalHits() > 0 {
 		return nil
 	}
-	log.Info.Println("put new service:", serviceName)
 	m := make(map[string]string)
 	m["serviceName"] = serviceName
 	jsonStr, _ := json.Marshal(m)
-	_, err = Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
+	res, err := Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
+	if res.Result == "created" {
+		log.Info.Println("put new service:", serviceName)
+	}
 	return err
 }
