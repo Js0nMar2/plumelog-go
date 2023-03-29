@@ -1,0 +1,17 @@
+[kafka]
+host = "192.168.0.132:9092"
+#host = "129.78.95.66:9092"
+groupId = "plumelog"
+
+[elastic]
+url = "http://192.168.0.143:30060"
+username = "elastic"
+password = "y1yovAhzJgraRk3vacHy"
+keepDays = 2
+# 定制日志级别不存储到ES
+logLevels = "DEBUG"
+[gin]
+port = 8090
+username = "admin"
+password = "admin"
+expireTime = 10080

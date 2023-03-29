@@ -1,0 +1,50 @@
+// 这个就是protobuf的中间文件
+
+// 指定的当前proto语法的版本，有2和3
+syntax = "proto3";
+
+// 指定等会文件生成出来的package
+package server;
+option go_package = "plumelog/rpc;server";
+
+// 定义request model
+message PlumelogRequest{
+  string topic = 1;
+  string env = 2;
+  string message = 3; // 1代表顺序
+}
+
+// 定义response model
+message PlumelogResponse{
+  string message = 1; // 1代表顺序
+}
+
+message PlumelogInfo{
+  string dateTime = 1;
+  string traceId = 2;
+  string method = 3;
+  string appName = 4;
+  string serverName = 5;
+  string className = 6;
+  string env= 7;
+  string content= 8;
+  string threadName= 9;
+  string url= 10;
+  string spanId = 11;
+  int64  dtTime= 12;
+  int64  costTime= 13;
+  string logLevel= 14;
+  int32  seq= 15;
+}
+
+message PlumelogServiceRequest{
+  string serviceName = 1; // 1代表顺序
+}
+
+// 定义服务主体
+service PlumelogService{
+  // 定义方法
+  rpc SendPlumelog(PlumelogRequest) returns(PlumelogResponse);
+  rpc PutService(PlumelogServiceRequest) returns(PlumelogResponse);
+  rpc WritePlumeLog(PlumelogInfo) returns (PlumelogInfo);
+}
