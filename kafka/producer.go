@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/Shopify/sarama"
@@ -22,7 +23,8 @@ var ProducerMap map[string]*Producer
 
 func init() {
 	ProducerMap = make(map[string]*Producer)
-	for _, hit := range plumelogEs.Hits {
+	result, _ := plumelogEs.Client.Search("plume_log_services").Do(context.Background())
+	for _, hit := range result.Hits.Hits {
 		marshalJSON, _ := hit.Source.MarshalJSON()
 		m := make(map[string]string)
 		json.Unmarshal(marshalJSON, &m)

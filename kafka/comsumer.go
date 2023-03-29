@@ -21,8 +21,11 @@ var (
 // init 初始化已知的服务的消费者
 func init() {
 	ConsumerMap = make(map[string]*ConsumerGroup)
-	topics := make([]string, 0)
-	for _, hit := range plumelogEs.Hits {
+	topics := []string{
+		"app-index",
+	}
+	result, _ := plumelogEs.Client.Search("plume_log_services").Do(context.Background())
+	for _, hit := range result.Hits.Hits {
 		marshalJSON, _ := hit.Source.MarshalJSON()
 		m := make(map[string]string)
 		json.Unmarshal(marshalJSON, &m)
@@ -113,18 +116,19 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 			break
 		}
 	}
+	rwLock := new(sync.RWMutex)
 	if claim.Topic() == "app-index" {
 		messages := claim.Messages()
 		for msg := range messages {
-			err := putService(string(msg.Value))
+			err := plumelogEs.PutService(string(msg.Value))
 			if err != nil {
 				log.Error.Println("set elastic index err:", err)
 				return err
 			}
+			sess.MarkMessage(msg, "")
 		}
 		return nil
 	}
-	rwLock := new(sync.RWMutex)
 	consumerGroup := ConsumerMap[config.Conf.GroupId]
 	go func() {
 		bulkService := plumelogEs.Client.Bulk()
@@ -179,20 +183,4 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 		sess.MarkMessage(msg, "")
 	}
 	return nil
-}
-
-func putService(serviceName string) error {
-	m := make(map[string]string, 100)
-	m["serviceName"] = serviceName
-	jsonStr, _ := json.Marshal(m)
-	query := elastic.NewTermQuery("serviceName", serviceName)
-	do, err := plumelogEs.Client.Search("plume_log_services").Query(query).Do(context.Background())
-	if err != nil {
-		return err
-	}
-	if do.TotalHits() > 0 {
-		return nil
-	}
-	_, err = plumelogEs.Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Do(context.Background())
-	return err
 }

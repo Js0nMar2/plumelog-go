@@ -16,7 +16,6 @@ import (
 
 var (
 	Client *elastic.Client
-	Hits   []*elastic.SearchHit
 )
 
 const index_prefix = "plume_log_"
@@ -27,11 +26,6 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	result, err := Client.Search("plume_log_services").Do(context.Background())
-	if err != nil {
-		panic(err)
-	}
-	Hits = result.Hits.Hits
 	timeStr := time.Now().Format("20060102")
 	createPlumelogIndex("plume_log_" + timeStr)
 	createPlumelogServicesIndex()
@@ -148,8 +142,13 @@ func QueryPage(req *model.PlumelogInfoPageReq) (*model.PlmelogInfoPageResp, erro
 }
 
 func GetAppNames() []string {
-	appNames := make([]string, 0, len(Hits))
-	for _, hit := range Hits {
+	result, err := Client.Search("plume_log_services").Do(context.Background())
+	if err != nil {
+		log.Error.Println(err)
+		return nil
+	}
+	appNames := make([]string, 0, len(result.Hits.Hits))
+	for _, hit := range result.Hits.Hits {
 		marshalJSON, _ := hit.Source.MarshalJSON()
 		m := make(map[string]string)
 		json.Unmarshal(marshalJSON, &m)
@@ -264,4 +263,21 @@ func getSearchService(req *model.PlumelogInfoPageReq) *elastic.SearchService {
 		query.Filter(rangeQuery)
 	}
 	return Client.Search(index...).Query(query)
+}
+
+func PutService(serviceName string) error {
+	query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("serviceName", serviceName)).Filter(elastic.NewIdsQuery().Ids(serviceName))
+	do, err := Client.Search("plume_log_services").Query(query).Do(context.Background())
+	if err != nil {
+		return err
+	}
+	if do.TotalHits() > 0 {
+		return nil
+	}
+	log.Info.Println("put new service:", serviceName)
+	m := make(map[string]string)
+	m["serviceName"] = serviceName
+	jsonStr, _ := json.Marshal(m)
+	_, err = Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
+	return err
 }
