@@ -134,14 +134,11 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 		bulkService := plumelogEs.Client.Bulk()
 		for {
 			select {
-			case <-time.After(5 * time.Second):
+			case plumelogInfo := <-consumerGroup.PlumeInfoCh:
 				timeStr := time.Now().Format("20060102")
-				for {
-					plumelogInfo := <-consumerGroup.PlumeInfoCh
-					request := elastic.NewBulkIndexRequest().Index("plume_log_" + timeStr).Doc(plumelogInfo)
-					bulkService.Add(request)
-					bulkService.Do(context.Background())
-				}
+				request := elastic.NewBulkIndexRequest().Index("plume_log_" + timeStr).Doc(plumelogInfo)
+				bulkService.Add(request)
+				bulkService.Do(context.Background())
 			}
 		}
 	}()
@@ -176,7 +173,6 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 					continue
 				}
 				ch <- plumelogInfo
-
 			}
 			rwLock.Unlock()
 		}
