@@ -5,8 +5,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"plumelog/config"
-	"time"
 )
 
 var Debug *log.Logger
@@ -20,8 +18,7 @@ func init() {
 }
 
 func createLogFile() {
-	format := time.Now().Format("20060102")
-	logFile, err := os.OpenFile("plume_log_"+format+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
+	logFile, err := os.OpenFile("plume_log_.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
@@ -30,19 +27,15 @@ func createLogFile() {
 	Info = log.New(multiWriter, "[info]", log.Ldate|log.Ltime|log.Lshortfile)
 	Warn = log.New(multiWriter, "[warn]", log.Ldate|log.Ltime|log.Lshortfile)
 	Error = log.New(multiWriter, "[error]", log.Ldate|log.Ltime|log.Lshortfile)
+	return
 }
 
 // LogJob 定时删除日志
 func LogJob() {
 	c := cron.New(cron.WithSeconds())
-	c.AddFunc("@daily", func() {
+	c.AddFunc("@every 10s", func() {
 		Info.Println("执行log定时任务。。。")
-		createLogFile()
-		format := time.Now().AddDate(0, 0, -config.Conf.KeepDays).Format("20060102")
-		err := os.Remove("plume_log_" + format + ".log")
-		if err != nil {
-			Error.Println(err)
-		}
+		os.Truncate("plume_log_.log", 0)
 	})
 	c.Start()
 }
