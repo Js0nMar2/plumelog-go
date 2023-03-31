@@ -9,22 +9,17 @@ import (
 	"time"
 )
 
-type Conf struct {
-	LogConf `toml:"log"`
-}
-
-type LogConf struct {
-	ServiceName string `json:"serviceName"`
-	Port        int    `json:"port"`
-}
-
-var Port int
 var Debug *log.Logger
 var Info *log.Logger
 var Warn *log.Logger
 var Error *log.Logger
 
 func init() {
+	createLogFile()
+	go LogJob()
+}
+
+func createLogFile() {
 	format := time.Now().Format("20060102")
 	logFile, err := os.OpenFile("plume_log_"+format+".log", os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
 	if err != nil {
@@ -35,7 +30,6 @@ func init() {
 	Info = log.New(multiWriter, "[info]", log.Ldate|log.Ltime|log.Lshortfile)
 	Warn = log.New(multiWriter, "[warn]", log.Ldate|log.Ltime|log.Lshortfile)
 	Error = log.New(multiWriter, "[error]", log.Ldate|log.Ltime|log.Lshortfile)
-	go LogJob()
 }
 
 // LogJob 定时删除日志
@@ -43,6 +37,7 @@ func LogJob() {
 	c := cron.New(cron.WithSeconds())
 	c.AddFunc("@daily", func() {
 		Info.Println("执行log定时任务。。。")
+		createLogFile()
 		format := time.Now().AddDate(0, 0, -config.Conf.KeepDays).Format("20060102")
 		err := os.Remove("plume_log_" + format + ".log")
 		if err != nil {
