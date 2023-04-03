@@ -33,7 +33,7 @@ func createLogFile() {
 // LogJob 定时删除日志
 func LogJob() {
 	c := cron.New(cron.WithSeconds())
-	c.AddFunc("@every 10s", func() {
+	c.AddFunc("@weekly", func() {
 		Info.Println("执行log定时任务。。。")
 		os.Truncate("plume_log_.log", 0)
 	})
