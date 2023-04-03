@@ -18,7 +18,7 @@ func init() {
 }
 
 func createLogFile() {
-	logFile, err := os.OpenFile("plume_log_.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
+	logFile, err := os.OpenFile("plume_log.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
@@ -35,7 +35,7 @@ func LogJob() {
 	c := cron.New(cron.WithSeconds())
 	c.AddFunc("@weekly", func() {
 		Info.Println("执行log定时任务。。。")
-		os.Truncate("plume_log_.log", 0)
+		os.Truncate("plume_log.log", 0)
 	})
 	c.Start()
 }
