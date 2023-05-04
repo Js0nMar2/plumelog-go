@@ -23,6 +23,7 @@ var (
 			return true
 		},
 	}
+	healths []model.HealthGuard
 )
 
 func main() {
@@ -36,10 +37,12 @@ func main() {
 	r.POST("/login", login)
 	r.Use(utils.Auth())
 	r.GET("/ws", wsHandle)
+	r.GET("/health", queryHealth)
 	r.GET("/hello", hello)
 	r.POST("/query", query)
 	r.GET("/appNames", getAppNames)
 	r.POST("/errors", queryErrors)
+	r.POST("/urls", queryUrls)
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
 	r.POST("/download", downloadLog)
 	r.NoRoute(func(c *gin.Context) {
@@ -79,9 +82,9 @@ func wsHandle(c *gin.Context) {
 	returnSuccess(conn)
 	key := token + "_" + appName
 	group := kafka.ConsumerMap[config.Conf.GroupId]
-	ch := group.WsChMap[key]
+	//ch := group.WsChMap[key]
 	model.ConnMap[key] = conn
-	ch = make(chan model.PlumelogInfo)
+	ch := make(chan model.PlumelogInfo)
 	group.WsChMap[key] = ch
 	go hearBeat(conn, token, appName)
 	go func() {
@@ -190,4 +193,73 @@ func downloadLog(c *gin.Context) {
 		c.Writer.Write([]byte(datum))
 	}
 	c.Writer.Flush()
+}
+
+func queryHealth(c *gin.Context) {
+	conn, _ := createConn(c)
+	writeHealth(conn)
+	query := c.Request.URL.Query()
+	token := query["token"][0]
+	group := kafka.ConsumerMap[config.Conf.GroupId]
+	ch := make(chan []byte)
+	group.HealthMap[token] = ch
+	go func() {
+		for {
+			select {
+			case bytes := <-ch:
+				healthGuard := model.HealthGuard{}
+				json.Unmarshal(bytes, &healthGuard)
+				if healthGuard.Status == "UP" {
+					healths = append(healths, healthGuard)
+				} else {
+					healths = delSlice(healths, healthGuard)
+				}
+				marshal, _ := json.Marshal(&healths)
+				log.Info.Println(string(marshal))
+				err := conn.WriteMessage(1, marshal)
+				if err != nil {
+					log.Error.Println(err)
+				}
+			}
+		}
+	}()
+}
+
+func writeHealth(conn *websocket.Conn) error {
+	healths = make([]model.HealthGuard, 0)
+	health, err := elastic.QueryHealth()
+	if err != nil {
+		conn.WriteMessage(1, []byte("查询es失败!err:"+err.Error()))
+	}
+	marshal, _ := json.Marshal(&health)
+	err = conn.WriteMessage(1, marshal)
+	healths = health
+	return err
+}
+
+func delSlice(a []model.HealthGuard, healthGuard model.HealthGuard) []model.HealthGuard {
+	tgt := a[:0]
+	for _, health := range a {
+		if healthGuard.AppName == health.AppName && healthGuard.Env == health.Env && healthGuard.Ip == health.Ip {
+			continue
+		}
+		tgt = append(tgt, health)
+	}
+	return tgt
+}
+
+func queryUrls(c *gin.Context) {
+	req := model.UrlStatReq{}
+	if err := c.BindJSON(&req); err != nil {
+		log.Error.Println("plume log errors bind json err:", err)
+		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
+		return
+	}
+	urls, err := elastic.QueryUrlCount(&req)
+	if err != nil {
+		log.Error.Println(err)
+		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"errCode": 0, "errMsg": "", "data": urls})
 }

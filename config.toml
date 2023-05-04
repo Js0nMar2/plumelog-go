@@ -1,13 +1,13 @@
 [kafka]
-host = "192.168.0.132:9092"
-#host = "129.78.95.66:9092"
+#host = "192.168.0.132:9092"
+host = "120.78.95.66:9092"
 groupId = "plumelog"
 
 [elastic]
-url = "http://192.168.0.143:30060"
-username = "elastic"
-password = "y1yovAhzJgraRk3vacHy"
-keepDays = 2
+url = "http://192.168.0.132:9200"
+username = ""
+password = ""
+keepDays = 3
 # 定制日志级别不存储到ES
 logLevels = "DEBUG"
 [gin]

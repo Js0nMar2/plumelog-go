@@ -105,7 +105,7 @@ type ErrorsReq struct {
 	Env       string `json:"env"`
 }
 
-type ErrorsResp struct {
+type StatisticsResp struct {
 	Key   string `json:"key"`
 	Count int    `json:"count"`
 }
@@ -119,4 +119,20 @@ type AggregationResp struct {
 type Buckets struct {
 	Key      string
 	DocCount int `json:"doc_count"`
+}
+
+type HealthGuard struct {
+	AppName string `json:"appName"`
+	Ip      string `json:"ip"`
+	Status  string `json:"status"`
+	Env     string `json:"env"`
+	Time    string `json:"time"`
+	Type    string `json:"type"`
+}
+
+type UrlStatReq struct {
+	BeginDate int64  `json:"beginDate" binding:"required"`
+	EndDate   int64  `json:"endDate" binding:"required"`
+	AppName   string `json:"appName"`
+	Env       string `json:"env"`
 }

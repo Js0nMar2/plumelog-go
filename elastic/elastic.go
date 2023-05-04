@@ -22,13 +22,16 @@ const index_prefix = "plume_log_"
 
 func init() {
 	Client, _ = elastic.NewClient(elastic.SetSniff(false), elastic.SetURL(config.Conf.Url), elastic.SetBasicAuth(config.Conf.Elastic.Username, config.Conf.Elastic.Password))
-	_, _, err := Client.Ping(config.Conf.Url).Do(context.Background())
+	result, _, err := Client.Ping(config.Conf.Url).Do(context.Background())
 	if err != nil {
 		panic(err)
 	}
+	marshal, _ := json.Marshal(result)
+	log.Info.Println(string(marshal))
 	timeStr := time.Now().Format("20060102")
 	createPlumelogIndex("plume_log_" + timeStr)
 	createPlumelogServicesIndex()
+	createPlumelogServicesStatusIndex()
 	// 不用协程会卡住
 	go indexJob()
 }
@@ -69,6 +72,30 @@ func createPlumelogServicesIndex() {
 		}
 	}`
 	_, err = Client.CreateIndex("plume_log_services").BodyJson(index).Do(context.Background())
+	if err != nil {
+		log.Error.Println(err)
+	}
+}
+
+func createPlumelogServicesStatusIndex() {
+	do, err := Client.IndexExists("plume_log_services_status").Do(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	if do {
+		return
+	}
+	index := `{
+		"mappings": {
+			"properties": {
+				"appName": {"type": "keyword"},
+				"ip": {"type": "keyword"},
+				"env": {"type": "keyword"},
+				"time": {"type": "keyword"}
+			}
+		}
+	}`
+	_, err = Client.CreateIndex("plume_log_services_status").BodyJson(index).Do(context.Background())
 	if err != nil {
 		log.Error.Println(err)
 	}
@@ -124,6 +151,9 @@ func QueryPage(req *model.PlumelogInfoPageReq) (*model.PlmelogInfoPageResp, erro
 	if req.ServiceName != "" {
 		service.Sort("seq", sort)
 	}
+	if len(req.CostTime) > 0 {
+		service.Sort("costTime", false)
+	}
 	result, err := service.From(req.From).Size(req.Size).Sort("dtTime", sort).Pretty(true).Do(context.Background())
 	if err != nil {
 		log.Error.Println(err)
@@ -142,7 +172,7 @@ func QueryPage(req *model.PlumelogInfoPageReq) (*model.PlmelogInfoPageResp, erro
 }
 
 func GetAppNames() []string {
-	result, err := Client.Search("plume_log_services").Do(context.Background())
+	result, err := Client.Search("plume_log_services").Size(100).Do(context.Background())
 	if err != nil {
 		log.Error.Println(err)
 		return nil
@@ -160,8 +190,8 @@ func GetAppNames() []string {
 	return appNames
 }
 
-func QueryErrors(req *model.ErrorsReq) ([]*model.ErrorsResp, error) {
-	resp := make([]*model.ErrorsResp, 0)
+func QueryErrors(req *model.ErrorsReq) ([]*model.StatisticsResp, error) {
+	resp := make([]*model.StatisticsResp, 0)
 	index := getIndex(req.BeginDate, req.EndDate)
 	query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("logLevel", "ERROR")).Filter(elastic.NewRangeQuery("dtTime").
 		Gte(req.BeginDate).Lte(req.EndDate))
@@ -179,9 +209,12 @@ func QueryErrors(req *model.ErrorsReq) ([]*model.ErrorsResp, error) {
 	}
 	aggregationResp := model.AggregationResp{}
 	do, err := Client.Search(index...).Query(query).Aggregation("errors", aggregation).Size(0).Do(context.Background())
+	if err != nil {
+		log.Error.Println(err)
+	}
 	json.Unmarshal(do.Aggregations["errors"], &aggregationResp)
 	for _, bucket := range aggregationResp.Buckets {
-		errorsResp := model.ErrorsResp{
+		errorsResp := model.StatisticsResp{
 			Key:   bucket.Key,
 			Count: bucket.DocCount,
 		}
@@ -263,4 +296,45 @@ func getSearchService(req *model.PlumelogInfoPageReq) *elastic.SearchService {
 		query.Filter(rangeQuery)
 	}
 	return Client.Search(index...).Query(query)
+}
+
+func QueryHealth() ([]model.HealthGuard, error) {
+	result, err := Client.Search("plume_log_services_status").Size(1000).Do(context.Background())
+	if err != nil {
+		log.Error.Println(err)
+		return nil, err
+	}
+	healthGuards := make([]model.HealthGuard, 0, len(result.Hits.Hits))
+	for _, hit := range result.Hits.Hits {
+		marshalJSON, _ := hit.Source.MarshalJSON()
+		guard := model.HealthGuard{}
+		json.Unmarshal(marshalJSON, &guard)
+		healthGuards = append(healthGuards, guard)
+	}
+	return healthGuards, nil
+}
+
+func QueryUrlCount(req *model.UrlStatReq) ([]*model.StatisticsResp, error) {
+	resp := make([]*model.StatisticsResp, 0)
+	index := getIndex(req.BeginDate, req.EndDate)
+	aggregation := elastic.NewTermsAggregation().Field("url").Size(50).OrderByCountDesc()
+	boolQuery := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("logLevel", "INFO")).MustNot(elastic.NewMatchQuery("content", "响应体信息"))
+	if req.AppName != "" {
+		boolQuery.Filter(elastic.NewTermsQuery("appName", req.AppName))
+	}
+	if req.Env != "" {
+		boolQuery.Filter(elastic.NewTermQuery("env", req.Env))
+	}
+	result, err := Client.Search(index...).Query(boolQuery).Aggregation("url_sort", aggregation).Do(context.Background())
+	aggregationResp := model.AggregationResp{}
+	message := result.Aggregations["url_sort"]
+	json.Unmarshal(message, &aggregationResp)
+	for _, bucket := range aggregationResp.Buckets {
+		errorsResp := model.StatisticsResp{
+			Key:   bucket.Key,
+			Count: bucket.DocCount,
+		}
+		resp = append(resp, &errorsResp)
+	}
+	return resp, err
 }

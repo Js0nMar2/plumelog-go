@@ -36,13 +36,17 @@ func Auth() gin.HandlerFunc {
 		token := c.Request.Header.Get("token")
 		if path == "/ws" {
 			query := c.Request.URL.Query()
-			appName := query["appName"][0]
 			token = query["token"][0]
+			appName := query["appName"][0]
 			if appName == "" {
 				c.Abort()
 				c.JSON(http.StatusOK, gin.H{"errCode": 400, "errMsg": "appName is not blank"})
 				return
 			}
+		}
+		if path == "/health" {
+			query := c.Request.URL.Query()
+			token = query["token"][0]
 		}
 		if !IsInvalidToken(token) {
 			c.Abort()
