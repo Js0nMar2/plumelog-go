@@ -37,24 +37,9 @@ func init() {
 			topics = append(topics, serviceName)
 		}
 	}
-	cg := &ConsumerGroup{
-		GroupId: config.Conf.GroupId,
-		Topics:  topics,
-	}
-	cg.Init()
+	cg := NewConsumerGroup(topics, []string{config.Conf.Kafka.Host}, config.Conf.GroupId)
+	go cg.Consume(cg)
 	ConsumerMap[config.Conf.GroupId] = cg
-}
-
-func (och *ConsumerGroup) Init() {
-	och.ConsumerGroup = NewMConsumerGroup(&MConsumerGroupConfig{KafkaVersion: sarama.V3_2_3_0,
-		OffsetsInitial: sarama.OffsetNewest, IsReturnErr: false}, och.Topics,
-		[]string{config.Conf.Kafka.Host}, och.GroupId)
-	och.PlumeInfoCh = make(chan model.PlumelogInfo, 10000)
-	och.WsChMap = make(map[string]chan model.PlumelogInfo)
-	och.HealthMap = make(map[string]chan []byte)
-	go func() {
-		och.Consume(context.Background(), och.Topics, och)
-	}()
 }
 
 type ConsumerGroup struct {
@@ -66,22 +51,20 @@ type ConsumerGroup struct {
 	HealthMap   map[string]chan []byte
 }
 
-type MConsumerGroupConfig struct {
-	KafkaVersion   sarama.KafkaVersion
-	OffsetsInitial int64
-	IsReturnErr    bool
+type ConsumerGroupHandler interface {
+	Consume(handler sarama.ConsumerGroupHandler)
 }
 
-func NewMConsumerGroup(consumerConfig *MConsumerGroupConfig, topics, addr []string, groupID string) *ConsumerGroup {
+func NewConsumerGroup(topics, addr []string, groupID string) *ConsumerGroup {
 	config := sarama.NewConfig()
-	config.Version = consumerConfig.KafkaVersion
-	config.Consumer.Offsets.Initial = consumerConfig.OffsetsInitial
-	config.Consumer.Return.Errors = consumerConfig.IsReturnErr
+	config.Version = sarama.V3_2_3_0
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	config.Consumer.Return.Errors = true
 	consumerGroup, err := sarama.NewConsumerGroup(addr, groupID, config)
 	if err != nil {
 		panic(err.Error())
 	}
-	log.Info.Println("kafka version:", consumerConfig.KafkaVersion, "init address is:", addr, "topics is:", topics)
+	log.Info.Println("kafka version:", config.Version, "init address is:", addr, "topics is:", topics)
 	plumeInfoCh := make(chan model.PlumelogInfo, 10000)
 	wsCh := make(map[string]chan model.PlumelogInfo)
 	healthMap := make(map[string]chan []byte)
@@ -94,12 +77,13 @@ func NewMConsumerGroup(consumerConfig *MConsumerGroupConfig, topics, addr []stri
 		healthMap,
 	}
 }
-func (mc *ConsumerGroup) RegisterHandleAndConsumer(handler sarama.ConsumerGroupHandler) {
+func (cg *ConsumerGroup) Consume(handler sarama.ConsumerGroupHandler) {
 	ctx := context.Background()
 	for {
-		err := mc.ConsumerGroup.Consume(ctx, mc.Topics, handler)
+		err := cg.ConsumerGroup.Consume(ctx, cg.Topics, handler)
 		if err != nil {
-			panic(err.Error())
+			log.Error.Println(err)
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -114,7 +98,7 @@ func (ConsumerGroup) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
 使用协程定时任务获取切片内的数据(批量)
 将获取到的数据打包发送到管道msgDistributionCh(1000打成一个元素,最后一个不满足1000的也为一个元素)
 */
-func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error { // a instance in the consumer group
+func (cg *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error { // a instance in the consumer group
 	for {
 		if sess == nil {
 			time.Sleep(100 * time.Millisecond)
@@ -123,7 +107,6 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 		}
 	}
 	rwLock := new(sync.RWMutex)
-	consumerGroup := ConsumerMap[config.Conf.GroupId]
 	if claim.Topic() == "app-index" {
 		messages := claim.Messages()
 		for msg := range messages {
@@ -140,7 +123,7 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 		bulkService := plumelogEs.Client.Bulk()
 		for {
 			select {
-			case plumelogInfo := <-consumerGroup.PlumeInfoCh:
+			case plumelogInfo := <-cg.PlumeInfoCh:
 				timeStr := time.Now().Format("20060102")
 				request := elastic.NewBulkIndexRequest().Index("plume_log_" + timeStr).Doc(plumelogInfo)
 				bulkService.Add(request)
@@ -154,11 +137,11 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 	//读取kafka数据记录到分片,使用定时批量读取分片内数据
 	messages := claim.Messages()
 	for msg := range messages {
+		//log.Info.Println(string(msg.Value))
 		b, err := putServiceStatus(msg.Value)
 		if b || err != nil {
-			//log.Info.Println("health-guard:", string(msg.Value))
 			if err == nil {
-				for _, guardCh := range consumerGroup.HealthMap {
+				for _, guardCh := range cg.HealthMap {
 					guardCh <- msg.Value
 				}
 			}
@@ -184,12 +167,12 @@ func (och *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim s
 			rwLock.Lock()
 			go func() {
 				if !strings.Contains(config.Conf.LogLevels, plumelogInfo.LogLevel) {
-					consumerGroup.PlumeInfoCh <- plumelogInfo
+					cg.PlumeInfoCh <- plumelogInfo
 				}
 			}()
-			for key, ch := range consumerGroup.WsChMap {
+			for key, ch := range cg.WsChMap {
 				if model.ConnMap[key] == nil {
-					delete(consumerGroup.WsChMap, key)
+					delete(cg.WsChMap, key)
 					continue
 				}
 				ch <- plumelogInfo
@@ -217,8 +200,6 @@ func putService(serviceName string) error {
 	if res.Result == "created" {
 		ConsumerMap[config.Conf.GroupId].Topics = append(ConsumerMap[config.Conf.GroupId].Topics, serviceName)
 		log.Info.Println("put new service:", serviceName)
-		// 更新 topic
-		ConsumerMap[config.Conf.GroupId].Init()
 	}
 	return err
 }
