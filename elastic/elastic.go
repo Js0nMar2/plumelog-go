@@ -120,6 +120,7 @@ func createPlumelogIndex(index string) {
 						"serverName": {"type":"keyword"},
 						"traceId": {"type":"keyword"},
 						"url": {"type":"keyword"},
+						"ip": {"type":"keyword"},
 						"costTime": {"type":"long"},
 						"dtTime": {"type":"date", "format":"strict_date_optional_time||epoch_millis"},
 						"seq": {"type":"long"}
@@ -148,7 +149,7 @@ func QueryPage(req *model.PlumelogInfoPageReq) (*model.PlmelogInfoPageResp, erro
 		sort = true
 	}
 	service := getSearchService(req)
-	if req.ServiceName != "" {
+	if req.ServiceName != "" || req.TraceId != "" {
 		service.Sort("seq", sort)
 	}
 	if len(req.CostTime) > 0 {
@@ -318,7 +319,7 @@ func QueryUrlCount(req *model.UrlStatReq) ([]*model.StatisticsResp, error) {
 	resp := make([]*model.StatisticsResp, 0)
 	index := getIndex(req.BeginDate, req.EndDate)
 	aggregation := elastic.NewTermsAggregation().Field("url").Size(50).OrderByCountDesc()
-	boolQuery := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("logLevel", "INFO")).MustNot(elastic.NewMatchQuery("content", "响应体信息"))
+	boolQuery := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("logLevel", "INFO"))
 	if req.AppName != "" {
 		boolQuery.Filter(elastic.NewTermsQuery("appName", req.AppName))
 	}
@@ -333,6 +334,15 @@ func QueryUrlCount(req *model.UrlStatReq) ([]*model.StatisticsResp, error) {
 		errorsResp := model.StatisticsResp{
 			Key:   bucket.Key,
 			Count: bucket.DocCount,
+		}
+		_aggregation := elastic.NewTermsAggregation().Field("ip").Size(30).OrderByCountDesc()
+		_boolQuery := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("logLevel", "INFO")).Filter(elastic.NewTermQuery("url", bucket.Key))
+		result, err = Client.Search(index...).Query(_boolQuery).Aggregation("ip_sort", _aggregation).Do(context.Background())
+		if result != nil {
+			_aggregationResp := model.AggregationResp{}
+			_message := result.Aggregations["ip_sort"]
+			json.Unmarshal(_message, &_aggregationResp)
+			errorsResp.Ips = _aggregationResp.Buckets
 		}
 		resp = append(resp, &errorsResp)
 	}

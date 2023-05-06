@@ -20,6 +20,7 @@ type PlumelogInfo struct {
 	Content    string `json:"content,omitempty"`
 	ThreadName string `json:"threadName,omitempty"`
 	Url        string `json:"url,omitempty"`
+	Ip         string `json:"ip,omitempty"`
 	SpanId     string `json:"spanId,omitempty"`
 	DtTime     int64  `json:"dtTime,omitempty"`
 	CostTime   int64  `json:"costTime,omitempty"`
@@ -106,14 +107,15 @@ type ErrorsReq struct {
 }
 
 type StatisticsResp struct {
-	Key   string `json:"key"`
-	Count int    `json:"count"`
+	Key   string    `json:"key"`
+	Count int       `json:"count"`
+	Ips   []Buckets `json:"ips"`
 }
 
 type AggregationResp struct {
 	DocCountErrorUpperBound int `json:"doc_count_error_upper_bound"`
 	SumOtherDocCount        int `json:"sum_other_doc_count"`
-	Buckets                 []*Buckets
+	Buckets                 []Buckets
 }
 
 type Buckets struct {
