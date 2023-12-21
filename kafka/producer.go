@@ -61,24 +61,18 @@ func (p *Producer) SendMessage(m proto.Message, topic, key string) (int32, int64
 	kMsg.Key = sarama.StringEncoder(key)
 	bMsg, err := proto.Marshal(m)
 	if err != nil {
-		log.Error.Println("proto marshal err = %s", err.Error())
+		log.Error("proto marshal err = %s", err.Error())
 		return -1, -1, err
 	}
 	if len(bMsg) == 0 {
-		log.Error.Println("len(bMsg) == 0 ")
+		log.Error("len(bMsg) == 0 ")
 		return 0, 0, errors.New("len(bMsg) == 0 ")
 	}
 	kMsg.Value = sarama.ByteEncoder(bMsg)
 	if kMsg.Key.Length() == 0 || kMsg.Value.Length() == 0 {
-		log.Error.Println("kMsg.Key.Length() == 0 || kMsg.Value.Length() == 0 ", kMsg)
+		log.Error("kMsg.Key.Length() == 0 || kMsg.Value.Length() == 0 ", kMsg)
 		return -1, -1, errors.New("key or value == 0")
 	}
 	a, b, c := p.producer.SendMessage(kMsg)
-	defer func() {
-		err := recover()
-		if err != nil {
-			log.Error.Println(err)
-		}
-	}()
 	return a, b, utils.Wrap(c, "")
 }

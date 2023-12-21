@@ -27,7 +27,7 @@ func init() {
 		panic(err)
 	}
 	marshal, _ := json.Marshal(result)
-	log.Info.Println(string(marshal))
+	log.Info(string(marshal))
 	timeStr := time.Now().Format("20060102")
 	createPlumelogIndex("plume_log_" + timeStr)
 	createPlumelogServicesIndex()
@@ -40,18 +40,11 @@ func init() {
 func indexJob() {
 	c := cron.New(cron.WithSeconds())
 	c.AddFunc("@daily", func() {
-		log.Info.Println("执行es索引定时任务。。。")
-		format := time.Now().AddDate(0, 0, -config.Conf.KeepDays).Format("20060102")
+		log.Info("执行es索引定时任务。。。")
+		format := time.Now().AddDate(0, 0, -config.Conf.Elastic.KeepDays).Format("20060102")
 		tomorrow := time.Now().AddDate(0, 0, 1).Format("20060102")
-		log.Info.Println(format)
 		createPlumelogIndex("plume_log_" + tomorrow)
 		Client.DeleteIndex("plume_log_" + format).Do(context.Background())
-		defer func() {
-			err := recover()
-			if err != nil {
-				log.Error.Println(err)
-			}
-		}()
 	})
 	c.Start()
 }
@@ -73,7 +66,7 @@ func createPlumelogServicesIndex() {
 	}`
 	_, err = Client.CreateIndex("plume_log_services").BodyJson(index).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 }
 
@@ -97,7 +90,7 @@ func createPlumelogServicesStatusIndex() {
 	}`
 	_, err = Client.CreateIndex("plume_log_services_status").BodyJson(index).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 }
 
@@ -131,13 +124,13 @@ func createPlumelogIndex(index string) {
 					"number_of_replicas": 1,
 					"refresh_interval": "30s",
 					"index":{
-								  "max_result_window": 100000
+								"max_result_window": 1000000000
 						  }
 				}
 			}`
 	_, err = Client.CreateIndex(index).BodyJson(mappings).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 }
 
@@ -155,9 +148,10 @@ func QueryPage(req *model.PlumelogInfoPageReq) (*model.PlmelogInfoPageResp, erro
 	if len(req.CostTime) > 0 {
 		service.Sort("costTime", false)
 	}
+	Client.Count()
 	result, err := service.From(req.From).Size(req.Size).Sort("dtTime", sort).Pretty(true).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		return nil, err
 	}
 	for _, hit := range result.Hits.Hits {
@@ -173,9 +167,11 @@ func QueryPage(req *model.PlumelogInfoPageReq) (*model.PlmelogInfoPageResp, erro
 }
 
 func GetAppNames() []string {
-	result, err := Client.Search("plume_log_services").Size(100).Do(context.Background())
+	ctx := context.Background()
+	count, err := Client.Count("plume_log_services").Do(ctx)
+	result, err := Client.Search("plume_log_services").Size(int(count)).Do(ctx)
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		return nil
 	}
 	appNames := make([]string, 0, len(result.Hits.Hits))
@@ -211,7 +207,7 @@ func QueryErrors(req *model.ErrorsReq) ([]*model.StatisticsResp, error) {
 	aggregationResp := model.AggregationResp{}
 	do, err := Client.Search(index...).Query(query).Aggregation("errors", aggregation).Size(0).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 	json.Unmarshal(do.Aggregations["errors"], &aggregationResp)
 	for _, bucket := range aggregationResp.Buckets {
@@ -238,9 +234,10 @@ func getIndex(beginDate, endDate int64) []string {
 }
 
 func DownloadLog(req *model.PlumelogInfoPageReq) ([]string, error) {
-	result, err := getSearchService(req).From(0).Size(50000).Sort("dtTime", false).Pretty(true).Do(context.Background())
+	do, err := getSearchService(req).Do(context.Background())
+	result, err := getSearchService(req).From(0).Size(int(do.Hits.TotalHits.Value)).Sort("dtTime", false).Pretty(true).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		return nil, err
 	}
 	res := make([]string, 0)
@@ -250,6 +247,7 @@ func DownloadLog(req *model.PlumelogInfoPageReq) ([]string, error) {
 		formart := fmt.Sprintf("%s %s [%s] %s --- %s   : %s \n", plumelogInfo.DateTime, plumelogInfo.LogLevel, plumelogInfo.AppName, plumelogInfo.ThreadName, plumelogInfo.ClassName, plumelogInfo.Content)
 		res = append(res, formart)
 	}
+	res = utils.Reverse(res)
 	return res, err
 }
 
@@ -296,13 +294,14 @@ func getSearchService(req *model.PlumelogInfoPageReq) *elastic.SearchService {
 		}
 		query.Filter(rangeQuery)
 	}
-	return Client.Search(index...).Query(query)
+	// TrackTotalHits: true 查询es文档总条数
+	return Client.Search(index...).TrackTotalHits(true).Query(query)
 }
 
 func QueryHealth() ([]model.HealthGuard, error) {
 	result, err := Client.Search("plume_log_services_status").Size(1000).Do(context.Background())
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		return nil, err
 	}
 	healthGuards := make([]model.HealthGuard, 0, len(result.Hits.Hits))
@@ -347,4 +346,48 @@ func QueryUrlCount(req *model.UrlStatReq) ([]*model.StatisticsResp, error) {
 		resp = append(resp, &errorsResp)
 	}
 	return resp, err
+}
+
+func PutService(serviceName string) (string, error) {
+	query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("serviceName", serviceName)).Filter(elastic.NewIdsQuery().Ids(serviceName))
+	_, err := Client.Search("plume_log_services").Query(query).Do(context.Background())
+	if err != nil {
+		return "", err
+	}
+	m := make(map[string]string)
+	m["serviceName"] = serviceName
+	jsonStr, _ := json.Marshal(m)
+	res, err := Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
+	return res.Result, err
+}
+
+func PutServiceStatus(plumelogInfo model.PlumelogInfo) (model.HealthGuard, error) {
+	healthGuard := model.HealthGuard{}
+	healthGuard.Env = plumelogInfo.Env
+	healthGuard.AppName = plumelogInfo.AppName
+	healthGuard.Time = plumelogInfo.DateTime
+	healthGuard.Ip = plumelogInfo.ServerName
+	if plumelogInfo.ClassName == config.Conf.Start.ClassName && plumelogInfo.Method == config.Conf.Start.Method {
+		healthGuard.Type = "healthGuard"
+		healthGuard.Status = "UP"
+	} else if plumelogInfo.ClassName == config.Conf.Stop.ClassName && plumelogInfo.Method == config.Conf.Stop.Method {
+		healthGuard.Type = "healthGuard"
+		healthGuard.Status = "DOWN"
+	} else {
+		return healthGuard, nil
+	}
+	if healthGuard.Status == "DOWN" {
+		query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("appName", healthGuard.AppName)).
+			Filter(elastic.NewTermQuery("ip", healthGuard.Ip)).Filter(elastic.NewTermQuery("env", healthGuard.Env))
+		_, err := Client.DeleteByQuery("plume_log_services_status").Query(query).Do(context.Background())
+		return healthGuard, err
+	}
+	m := make(map[string]string)
+	m["appName"] = healthGuard.AppName
+	m["ip"] = healthGuard.Ip
+	m["env"] = healthGuard.Env
+	m["time"] = healthGuard.Time
+	jsonStr, _ := json.Marshal(m)
+	_, err := Client.Index().Index("plume_log_services_status").BodyJson(string(jsonStr)).Id(healthGuard.Env + "-" + healthGuard.AppName + "-" + healthGuard.Ip).Do(context.Background())
+	return healthGuard, err
 }

@@ -11,6 +11,7 @@ type Config struct {
 	Kafka
 	Elastic
 	Gin
+	Log
 }
 
 type Kafka struct {
@@ -24,6 +25,13 @@ type Elastic struct {
 	Password  string
 	KeepDays  int
 	LogLevels string
+	Start     Status
+	Stop      Status
+}
+
+type Status struct {
+	ClassName string
+	Method    string
 }
 
 type Gin struct {
@@ -31,6 +39,12 @@ type Gin struct {
 	Username   string
 	Password   string
 	ExpireTime int
+}
+
+type Log struct {
+	Level    int
+	KeepDays int
+	Prefix   string
 }
 
 func init() {
@@ -48,10 +62,17 @@ func init() {
 	Conf.Url = config.GetString("elastic.url")
 	Conf.Elastic.Username = config.GetString("elastic.username")
 	Conf.Elastic.Password = config.GetString("elastic.password")
-	Conf.KeepDays = config.GetInt("elastic.keepDays")
+	Conf.Elastic.KeepDays = config.GetInt("elastic.keepDays")
+	Conf.Elastic.Start.ClassName = config.GetString("elastic.start.className")
+	Conf.Elastic.Start.Method = config.GetString("elastic.start.method")
+	Conf.Elastic.Stop.ClassName = config.GetString("elastic.stop.className")
+	Conf.Elastic.Stop.Method = config.GetString("elastic.stop.method")
 	Conf.LogLevels = config.GetString("elastic.logLevels")
 	Conf.Gin.Port = config.GetInt("gin.port")
 	Conf.Gin.Username = config.GetString("gin.username")
 	Conf.Gin.Password = config.GetString("gin.password")
 	Conf.Gin.ExpireTime = config.GetInt("gin.expireTime")
+	Conf.Level = config.GetInt("log.level")
+	Conf.Log.KeepDays = config.GetInt("log.keep-days")
+	Conf.Log.Prefix = config.GetString("log.prefix")
 }

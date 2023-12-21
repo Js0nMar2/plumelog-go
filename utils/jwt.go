@@ -27,7 +27,7 @@ func GenerateToken(username, password string) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signedString, err := token.SignedString([]byte("jwt_token"))
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 	return signedString
 }
@@ -38,7 +38,7 @@ func ParseToken(tokenStr string) (*JwtCustomClaims, error) {
 		return []byte("jwt_token"), nil
 	})
 	if err != nil {
-		log.Error.Println("parse token err:", err)
+		log.Error("parse token err:%s", err)
 		return nil, err
 	}
 	return &customClaims, nil

@@ -1,41 +1,130 @@
 package log
 
 import (
+	"fmt"
 	"github.com/robfig/cron/v3"
 	"io"
 	"log"
 	"os"
+	"plumelog/config"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
-var Debug *log.Logger
-var Info *log.Logger
-var Warn *log.Logger
-var Error *log.Logger
+var (
+	debug         *log.Logger
+	info          *log.Logger
+	warn          *log.Logger
+	error         *log.Logger
+	dayChangeLock sync.RWMutex
+)
+
+const (
+	debugLevel = iota //iota=0
+	infoLevel
+	warnLevel
+	errorLevel
+)
 
 func init() {
+	dayChangeLock = sync.RWMutex{}
 	createLogFile()
-	go LogJob()
+	go logJob()
 }
 
 func createLogFile() {
-	logFile, err := os.OpenFile("plume_log.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
+	dayChangeLock.Lock()
+	defer dayChangeLock.Unlock()
+	now := time.Now()
+	postFix := now.Format("20060102")
+	logFile := "log/plume_log_" + postFix + ".log"
+	logOut, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, os.ModePerm)
 	if err != nil {
 		panic(err)
+	} else {
+		writer := io.MultiWriter(os.Stdout, logOut)
+		debug = log.New(writer, "[DEBUG] ", log.LstdFlags|log.Lmicroseconds)
+		info = log.New(writer, "[INFO] ", log.LstdFlags|log.Lmicroseconds)
+		warn = log.New(writer, "[WARN] ", log.LstdFlags|log.Lmicroseconds)
+		error = log.New(writer, "[ERROR] ", log.LstdFlags|log.Lmicroseconds)
 	}
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-	Debug = log.New(multiWriter, "[debug]", log.Ldate|log.Ltime|log.Lshortfile)
-	Info = log.New(multiWriter, "[info]", log.Ldate|log.Ltime|log.Lshortfile)
-	Warn = log.New(multiWriter, "[warn]", log.Ldate|log.Ltime|log.Lshortfile)
-	Error = log.New(multiWriter, "[error]", log.Ldate|log.Ltime|log.Lshortfile)
-	return
 }
 
-// LogJob 定时删除日志
-func LogJob() {
+func Debug(format string, v ...any) {
+	if config.Conf.Level <= debugLevel {
+		debug.Printf(getLineNo()+format, v...)
+	}
+}
+
+func Info(format string, v ...any) {
+	if config.Conf.Level <= infoLevel {
+		info.Printf(getLineNo()+format, v...)
+	}
+}
+
+func Warn(format string, v ...any) {
+	if config.Conf.Level <= warnLevel {
+		warn.Printf(getLineNo()+format, v...)
+	}
+}
+
+func Error(format string, v ...any) {
+	if config.Conf.Level <= errorLevel {
+		error.Printf(getLineNo()+format, v...)
+	}
+}
+
+func getLineNo() string {
+	_, file, line, ok := runtime.Caller(2)
+	if ok {
+		split := strings.Split(file, "/")
+		file = split[len(split)-1]
+		fileLine := file + ":" + strconv.Itoa(line) + " "
+		return fileLine
+	}
+	return ""
+}
+
+// logJob 定时操作日志
+func logJob() {
 	c := cron.New(cron.WithSeconds())
-	c.AddFunc("@weekly", func() {
-		Info.Println("执行log定时任务。。。")
-		os.Truncate("plume_log.log", 0)
+	c.AddFunc("@daily", func() {
+		Info("执行log定时任务。。。")
+		now := time.Now()
+		createLogFile()
+		//关闭昨天的日志
+		closeYesterdayLogFile := fmt.Sprintf("plume_log_%s.log", now.Add(-24*time.Hour).Format("20060102"))
+		file, _ := os.Open(closeYesterdayLogFile)
+		file.Sync()
+		file.Close()
+		Info("关闭日志: %s", closeYesterdayLogFile)
+		// 删除n天前的日志
+		removeLogFile := fmt.Sprintf("plume_log_%s.log", now.Add(time.Duration(config.Conf.Log.KeepDays)*-24*time.Hour).Format("20060102"))
+		// 日志是否存在
+		_, err := os.Open(removeLogFile)
+		if err != nil {
+			Error(err.Error())
+			return
+		}
+		go func() {
+			// 设置for select 的原因是文件虽然被关闭了，但文件所占的process还在进行中，每10秒轮询一次，执行删除操作，确保文件有被删除
+		loop:
+			for {
+				select {
+				case <-time.After(10 * time.Second):
+					removeErr := os.Remove(removeLogFile)
+					if removeErr != nil {
+						Error(removeErr.Error())
+					} else {
+						Info("删除日志成功：%s", removeLogFile)
+						break loop
+					}
+				}
+			}
+		}()
 	})
 	c.Start()
 }
@@ -66,24 +155,24 @@ func LogJob() {
 //	light_yellow int // 亮黄色
 //	white        int // 白色
 //}
-//
-//// 输出有颜色的字体
+
+// 输出有颜色的字体
 //func ColorPrint4Window(s, t string) {
 //	switch t {
 //	case "DEBUG":
 //		proc.Call(uintptr(syscall.Stdout), uintptr(FontColor.light_cyan))
-//		Debug.Println(s)
+//		Debug(s)
 //	case "INFO":
 //		proc.Call(uintptr(syscall.Stdout), uintptr(FontColor.green))
-//		Info.Println(s)
+//		Info(s)
 //	case "WARN":
 //		proc.Call(uintptr(syscall.Stdout), uintptr(FontColor.light_yellow))
-//		Warn.Println(s)
+//		Warn(s)
 //	case "ERROR":
 //		proc.Call(uintptr(syscall.Stdout), uintptr(FontColor.red))
-//		Error.Println(s)
+//		Error(s)
 //	default:
 //		proc.Call(uintptr(syscall.Stdout), uintptr(FontColor.black))
-//		Info.Println(s)
+//		Info(s)
 //	}
 //}

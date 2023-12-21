@@ -1,6 +1,6 @@
 [kafka]
-#host = "192.168.0.132:9092"
-host = "120.78.95.66:9092"
+host = "192.168.0.132:9092"
+#host = "120.78.95.66:9092"
 groupId = "plumelog"
 
 [elastic]
@@ -8,6 +8,9 @@ url = "http://192.168.0.132:9200"
 username = ""
 password = ""
 keepDays = 3
+start={className="com.wf.plumelog.logback.actuator.HealthActuator",method="init(HealthActuator.java:43)"}
+stop={className="com.alibaba.nacos.client.naming",method="shutdown(HostReactor.java:413)"}
+
 # 定制日志级别不存储到ES
 logLevels = "DEBUG"
 [gin]
@@ -15,3 +18,7 @@ port = 8090
 username = "admin"
 password = "admin"
 expireTime = 10080
+[log]
+level = 0
+keep-days = 7
+prefix = "plume_log"

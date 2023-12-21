@@ -22,7 +22,7 @@ func WorkId() string {
 	newSonyflake := sonyflake.NewSonyflake(sonyflake.Settings{})
 	id, err := newSonyflake.NextID()
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 	return strconv.Itoa(int(id))
 }
@@ -43,4 +43,27 @@ func NextDay(datetime int64, days int, pattern string) string {
 
 func BetweenDays(beginDate, endDate int64) int {
 	return int((endDate - beginDate) / (1000 * 60 * 60 * 24))
+}
+
+func ParseTime(datetime string) string {
+	format := "2006-01-02 15:04:05.000"
+	parse, err := time.Parse(format, datetime)
+	if err != nil {
+		log.Error(err.Error())
+		return ""
+	}
+	location, err := time.LoadLocation("Local")
+	if err != nil {
+		log.Error(err.Error())
+		return ""
+	}
+	return parse.In(location).Format(format)
+}
+
+func Reverse(s []string) []string {
+	newS := make([]string, 0, len(s))
+	for i := len(s) - 1; i >= 0; i-- {
+		newS = append(newS, s[i])
+	}
+	return newS
 }

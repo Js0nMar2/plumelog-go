@@ -21,7 +21,7 @@ func (p *RpcServer) SendPlumelog(ctx context.Context, req *rpc.PlumelogRequest) 
 	var plumelogInfos []string
 	err := json.Unmarshal([]byte(req.Message), &plumelogInfos)
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 	}
 	if req.Topic == "plumelog" {
 		p.isOpenWs = false
@@ -70,7 +70,6 @@ func (*RpcServer) PutService(ctx context.Context, req *rpc.PlumelogServiceReques
 		GroupId: req.ServiceName,
 		Topics:  []string{req.ServiceName},
 	}
-	cm.Init()
 	kafka.ConsumerMap[req.ServiceName] = cm
 	return &rpc.PlumelogResponse{Message: response.Result}, err
 }

@@ -9,7 +9,7 @@ import (
 	plumelogEs "plumelog/elastic"
 	"plumelog/log"
 	"plumelog/model"
-	"strings"
+	"plumelog/utils"
 	"sync"
 	"time"
 )
@@ -26,7 +26,7 @@ func init() {
 	topics := []string{
 		"app-index",
 	}
-	result, _ := plumelogEs.Client.Search("plume_log_services").Do(context.Background())
+	result, _ := plumelogEs.Client.Search("plume_log_services").Size(100).Do(context.Background())
 	for _, hit := range result.Hits.Hits {
 		marshalJSON, _ := hit.Source.MarshalJSON()
 		m := make(map[string]string)
@@ -38,8 +38,8 @@ func init() {
 		}
 	}
 	cg := NewConsumerGroup(topics, []string{config.Conf.Kafka.Host}, config.Conf.GroupId)
-	go cg.Consume(cg)
 	ConsumerMap[config.Conf.GroupId] = cg
+	go cg.StartConsumerGroup(cg)
 }
 
 type ConsumerGroup struct {
@@ -51,10 +51,6 @@ type ConsumerGroup struct {
 	HealthMap   map[string]chan []byte
 }
 
-type ConsumerGroupHandler interface {
-	Consume(handler sarama.ConsumerGroupHandler)
-}
-
 func NewConsumerGroup(topics, addr []string, groupID string) *ConsumerGroup {
 	config := sarama.NewConfig()
 	config.Version = sarama.V3_2_3_0
@@ -64,7 +60,7 @@ func NewConsumerGroup(topics, addr []string, groupID string) *ConsumerGroup {
 	if err != nil {
 		panic(err.Error())
 	}
-	log.Info.Println("kafka version:", config.Version, "init address is:", addr, "topics is:", topics)
+	log.Info("kafka version: %s init address is: %s topics is: %s", config.Version, addr, topics)
 	plumeInfoCh := make(chan model.PlumelogInfo, 10000)
 	wsCh := make(map[string]chan model.PlumelogInfo)
 	healthMap := make(map[string]chan []byte)
@@ -77,79 +73,43 @@ func NewConsumerGroup(topics, addr []string, groupID string) *ConsumerGroup {
 		healthMap,
 	}
 }
-func (cg *ConsumerGroup) Consume(handler sarama.ConsumerGroupHandler) {
+
+// 启动消费者
+func (cg *ConsumerGroup) StartConsumerGroup(handler sarama.ConsumerGroupHandler) {
 	ctx := context.Background()
 	for {
 		err := cg.ConsumerGroup.Consume(ctx, cg.Topics, handler)
 		if err != nil {
-			log.Error.Println(err)
+			log.Error(err.Error())
 			time.Sleep(1 * time.Second)
 		}
 	}
 }
 
-func (ConsumerGroup) Setup(_ sarama.ConsumerGroupSession) error { return nil }
+func (*ConsumerGroup) Setup(_ sarama.ConsumerGroupSession) error { return nil }
 
-func (ConsumerGroup) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
+func (*ConsumerGroup) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
 
-/*
-*
-读取kafka消息放入到切片
-使用协程定时任务获取切片内的数据(批量)
-将获取到的数据打包发送到管道msgDistributionCh(1000打成一个元素,最后一个不满足1000的也为一个元素)
-*/
 func (cg *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error { // a instance in the consumer group
-	for {
-		if sess == nil {
-			time.Sleep(100 * time.Millisecond)
-		} else {
-			break
-		}
-	}
 	rwLock := new(sync.RWMutex)
-	if claim.Topic() == "app-index" {
-		messages := claim.Messages()
-		for msg := range messages {
-			err := putService(string(msg.Value))
-			if err != nil {
-				log.Error.Println("set elastic index err:", err)
-				return err
-			}
-			sess.MarkMessage(msg, "")
-		}
-		return nil
-	}
-	go func() {
-		bulkService := plumelogEs.Client.Bulk()
-		for {
-			select {
-			case plumelogInfo := <-cg.PlumeInfoCh:
-				timeStr := time.Now().Format("20060102")
-				request := elastic.NewBulkIndexRequest().Index("plume_log_" + timeStr).Doc(plumelogInfo)
-				bulkService.Add(request)
-				_, err := bulkService.Do(context.Background())
-				if err != nil {
-					log.Error.Println(err)
-				}
-			}
-		}
-	}()
+	bulkService := plumelogEs.Client.Bulk()
 	//读取kafka数据记录到分片,使用定时批量读取分片内数据
 	messages := claim.Messages()
 	for msg := range messages {
-		//log.Info.Println(string(msg.Value))
-		b, err := putServiceStatus(msg.Value)
-		if b || err != nil {
-			if err == nil {
-				for _, guardCh := range cg.HealthMap {
-					guardCh <- msg.Value
-				}
+		if claim.Topic() == "app-index" {
+			err := cg.putService(string(msg.Value))
+			if err != nil {
+				log.Error("set elastic index err:", err)
+				return err
 			}
 			sess.MarkMessage(msg, "")
-			continue
+			return nil
 		}
-		m := make([]string, 1)
-		json.Unmarshal(msg.Value, &m)
+		m := make([]string, 0)
+		err := json.Unmarshal(msg.Value, &m)
+		if err != nil {
+			log.Error(err.Error())
+		}
 		for _, message := range m {
 			if message == "" {
 				continue
@@ -157,19 +117,35 @@ func (cg *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sa
 			mm := make(map[string]string)
 			err := json.Unmarshal([]byte(message), &mm)
 			if err != nil {
-				log.Error.Println(err.Error())
+				log.Error(err.Error())
 			}
 			plumelogInfo := model.PlumelogInfo{}
 			err = json.Unmarshal([]byte(mm["message"]), &plumelogInfo)
 			if err != nil {
-				log.Error.Println(err.Error())
+				log.Error(err.Error())
 			}
+			plumelogInfo.DateTime = utils.ParseTime(plumelogInfo.DateTime)
 			rwLock.Lock()
-			go func() {
-				if !strings.Contains(config.Conf.LogLevels, plumelogInfo.LogLevel) {
-					cg.PlumeInfoCh <- plumelogInfo
+			healthGuard, err := plumelogEs.PutServiceStatus(plumelogInfo)
+			if err != nil {
+				log.Error(err.Error())
+			}
+			if err == nil && healthGuard.Type != "" {
+				for _, guardCh := range cg.HealthMap {
+					marshal, err := json.Marshal(healthGuard)
+					if err != nil {
+						log.Error(err.Error())
+					}
+					guardCh <- marshal
 				}
+			}
+			// 批量写入es
+			go func() {
+				timeStr := time.Now().Format("20060102")
+				request := elastic.NewBulkIndexRequest().Index("plume_log_" + timeStr).Doc(plumelogInfo)
+				bulkService.Add(request)
 			}()
+			// ws
 			for key, ch := range cg.WsChMap {
 				if model.ConnMap[key] == nil {
 					delete(cg.WsChMap, key)
@@ -179,52 +155,23 @@ func (cg *ConsumerGroup) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sa
 			}
 			rwLock.Unlock()
 		}
+		if bulkService.NumberOfActions() > 0 {
+			_, err = bulkService.Do(context.Background())
+			if err != nil {
+				log.Error(err.Error())
+			}
+		}
 		sess.MarkMessage(msg, "")
 	}
 	return nil
 }
 
-func putService(serviceName string) error {
-	query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("serviceName", serviceName)).Filter(elastic.NewIdsQuery().Ids(serviceName))
-	do, err := plumelogEs.Client.Search("plume_log_services").Query(query).Do(context.Background())
-	if err != nil {
-		return err
-	}
-	if do.TotalHits() > 0 {
-		return nil
-	}
-	m := make(map[string]string)
-	m["serviceName"] = serviceName
-	jsonStr, _ := json.Marshal(m)
-	res, err := plumelogEs.Client.Index().Index("plume_log_services").BodyJson(string(jsonStr)).Id(serviceName).Do(context.Background())
-	if res.Result == "created" {
-		ConsumerMap[config.Conf.GroupId].Topics = append(ConsumerMap[config.Conf.GroupId].Topics, serviceName)
-		log.Info.Println("put new service:", serviceName)
+func (cg *ConsumerGroup) putService(serviceName string) error {
+	res, err := plumelogEs.PutService(serviceName)
+	if res == "created" {
+		cg.Topics = append(cg.Topics, serviceName)
+		log.Info("put new service:", serviceName)
+		cg.StartConsumerGroup(cg)
 	}
 	return err
-}
-
-func putServiceStatus(bytes []byte) (bool, error) {
-	healthGuard := model.HealthGuard{}
-	json.Unmarshal(bytes, &healthGuard)
-	if healthGuard.Type == "" || healthGuard.Type != "healthGuard" {
-		return false, nil
-	}
-	if healthGuard.Status == "DOWN" {
-		query := elastic.NewBoolQuery().Filter(elastic.NewTermQuery("appName", healthGuard.AppName)).
-			Filter(elastic.NewTermQuery("ip", healthGuard.Ip)).Filter(elastic.NewTermQuery("env", healthGuard.Env))
-		_, err := plumelogEs.Client.DeleteByQuery("plume_log_services_status").Query(query).Do(context.Background())
-		if err != nil {
-			return true, err
-		}
-		return true, nil
-	}
-	m := make(map[string]string)
-	m["appName"] = healthGuard.AppName
-	m["ip"] = healthGuard.Ip
-	m["env"] = healthGuard.Env
-	m["time"] = healthGuard.Time
-	jsonStr, _ := json.Marshal(m)
-	_, err := plumelogEs.Client.Index().Index("plume_log_services_status").BodyJson(string(jsonStr)).Id(healthGuard.Env + "-" + healthGuard.AppName + "-" + healthGuard.Ip).Do(context.Background())
-	return true, err
 }

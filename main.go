@@ -5,6 +5,7 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"net/http"
 	"plumelog/config"
@@ -14,6 +15,7 @@ import (
 	"plumelog/model"
 	"plumelog/utils"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -55,12 +57,12 @@ func main() {
 func login(c *gin.Context) {
 	user := model.UserInfo{}
 	if err := c.BindJSON(&user); err != nil {
-		log.Error.Println("user login bind json err:", err)
+		log.Error("user login bind json err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
 	if user.Username != config.Conf.Gin.Username || user.Password != config.Conf.Gin.Password {
-		log.Error.Println("username or password error")
+		log.Error("username or password error")
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": "username or password error"})
 		return
 	}
@@ -79,7 +81,7 @@ func wsHandle(c *gin.Context) {
 	appName := query["appName"][0]
 	env := query["env"][0]
 	conn, _ := createConn(c)
-	returnSuccess(conn)
+	returnSuccess(conn, appName)
 	key := token + "_" + appName
 	group := kafka.ConsumerMap[config.Conf.GroupId]
 	//ch := group.WsChMap[key]
@@ -95,7 +97,7 @@ func wsHandle(c *gin.Context) {
 					bytes, err := json.Marshal(&plumelogInfo)
 					err = conn.WriteMessage(1, bytes)
 					if err != nil {
-						log.Error.Println(err)
+						log.Error(err.Error())
 						return
 					}
 				}
@@ -109,16 +111,17 @@ func createConn(c *gin.Context) (*websocket.Conn, error) {
 	return conn, err
 }
 
-func returnSuccess(conn *websocket.Conn) {
+func returnSuccess(conn *websocket.Conn, appName string) {
 	info := &model.PlumelogInfo{
-		Seq:       1,
-		LogLevel:  "INFO",
-		TraceId:   "start",
-		DateTime:  time.Now().Format("2006-01-02 15:04:05"),
-		ClassName: "ws",
-		Method:    "start",
+		Seq:        1,
+		ThreadName: "main",
+		LogLevel:   "INFO",
+		TraceId:    strings.ReplaceAll(uuid.NewString(), "-", "")[0:16],
+		DateTime:   time.Now().Format("2006-01-02 15:04:05"),
+		ClassName:  appName,
+		Method:     "ws",
+		Content:    "=======================<~滚动日志连接成功!~>=======================",
 	}
-	info.Content = "====================================================滚动日志连接成功!====================================================="
 	bytes, _ := json.Marshal(&info)
 	conn.WriteMessage(1, bytes)
 }
@@ -130,7 +133,7 @@ func hearBeat(conn *websocket.Conn, token, appName string) {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
 			conn.Close()
-			log.Error.Println(token, "is disconnect:", err)
+			log.Error(token, "is disconnect:", err)
 			delete(model.ConnMap, key)
 			return
 		}
@@ -140,13 +143,13 @@ func hearBeat(conn *websocket.Conn, token, appName string) {
 func query(c *gin.Context) {
 	req := model.PlumelogInfoPageReq{}
 	if err := c.BindJSON(&req); err != nil {
-		log.Error.Println("plume log page bind json err:", err)
+		log.Error("plume log page bind json err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
 	page, err := elastic.QueryPage(&req)
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
@@ -160,13 +163,13 @@ func getAppNames(c *gin.Context) {
 func queryErrors(c *gin.Context) {
 	req := model.ErrorsReq{}
 	if err := c.BindJSON(&req); err != nil {
-		log.Error.Println("plume log errors bind json err:", err)
+		log.Error("plume log errors bind json err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
 	errors, err := elastic.QueryErrors(&req)
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
@@ -176,13 +179,13 @@ func queryErrors(c *gin.Context) {
 func downloadLog(c *gin.Context) {
 	req := model.PlumelogInfoPageReq{}
 	if err := c.BindJSON(&req); err != nil {
-		log.Error.Println("plume log page bind json err:", err)
+		log.Error("plume log page bind json err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
 	data, err := elastic.DownloadLog(&req)
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
@@ -215,10 +218,10 @@ func queryHealth(c *gin.Context) {
 					healths = delSlice(healths, healthGuard)
 				}
 				marshal, _ := json.Marshal(&healths)
-				log.Info.Println(string(marshal))
+				log.Info(string(marshal))
 				err := conn.WriteMessage(1, marshal)
 				if err != nil {
-					log.Error.Println(err)
+					log.Error(err.Error())
 				}
 			}
 		}
@@ -251,13 +254,13 @@ func delSlice(a []model.HealthGuard, healthGuard model.HealthGuard) []model.Heal
 func queryUrls(c *gin.Context) {
 	req := model.UrlStatReq{}
 	if err := c.BindJSON(&req); err != nil {
-		log.Error.Println("plume log errors bind json err:", err)
+		log.Error("plume log errors bind json err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
 	urls, err := elastic.QueryUrlCount(&req)
 	if err != nil {
-		log.Error.Println(err)
+		log.Error(err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"errCode": 400, "errMsg": err.Error()})
 		return
 	}
